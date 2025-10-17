@@ -9,9 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Search, X } from "lucide-react";
 
-type PaginatedQueriesResponse =
-  components["schemas"]["PaginatedQueriesResponse"];
-type Query = components["schemas"]["QueryResponse"];
+type PaginatedQueriesResponse = components["schemas"]["PaginatedQueriesResponse"];
 type SearchQueryResult = components["schemas"]["QuerySearchResult"];
 
 interface ClusterQueriesClientProps {
@@ -20,15 +18,9 @@ interface ClusterQueriesClientProps {
   initialData: PaginatedQueriesResponse;
 }
 
-export function ClusterQueriesClient({
-  runId,
-  clusterId,
-  initialData,
-}: ClusterQueriesClientProps) {
-  // Convert to DataViewer format (minimal transformation)
-  const toDataViewerFormat = (
-    data: PaginatedQueriesResponse,
-  ): DataViewerData => ({
+export function ClusterQueriesClient({ runId, clusterId, initialData }: ClusterQueriesClientProps) {
+
+  const toDataViewerFormat = (data: PaginatedQueriesResponse): DataViewerData => ({
     queries: data.items.map((q) => ({
       id: q.id,
       conversation_id: q.conversation_id,
@@ -60,9 +52,9 @@ export function ClusterQueriesClient({
           page?: number;
           pages?: number;
         }>(
-          `/api/search/queries?text=${encodeURIComponent(currentSearchText)}&run_id=${runId}&page=${newPage}&limit=50`,
+          `/api/search/queries?text=${encodeURIComponent(currentSearchText)}&run_id=${runId}&page=${newPage}&limit=50`
         );
-        // Convert search results to DataViewer format
+
         const convertedData: DataViewerData = {
           queries: searchResults.items.map((item) => ({
             id: item.query.id,
@@ -71,14 +63,12 @@ export function ClusterQueriesClient({
             query_text: item.query.query_text,
             language: item.query.language ?? null,
             timestamp: item.query.timestamp ?? null,
-            clusters: item.clusters.map(
-              (c: components["schemas"]["ClusterInfo"]) => ({
-                cluster_id: c.cluster_id,
-                run_id: c.run_id,
-                title: c.title ?? null,
-                confidence_score: c.confidence_score,
-              }),
-            ),
+            clusters: item.clusters.map((c: components["schemas"]["ClusterInfo"]) => ({
+              cluster_id: c.cluster_id,
+              run_id: c.run_id,
+              title: c.title ?? null,
+              confidence_score: c.confidence_score,
+            })),
           })),
           total: searchResults.total,
           page: searchResults.page ?? 1,
@@ -90,9 +80,7 @@ export function ClusterQueriesClient({
         const clusterDetail = await apiFetch<{
           cluster: components["schemas"]["ClusterSummaryResponse"];
           queries: PaginatedQueriesResponse;
-        }>(
-          `/api/clustering/runs/${runId}/clusters/${clusterId}?page=${newPage}&limit=50`,
-        );
+        }>(`/api/clustering/runs/${runId}/clusters/${clusterId}?page=${newPage}&limit=50`);
         setData(toDataViewerFormat(clusterDetail.queries));
       }
 
@@ -116,9 +104,9 @@ export function ClusterQueriesClient({
         page?: number;
         pages?: number;
       }>(
-        `/api/search/queries?text=${encodeURIComponent(searchText)}&run_id=${runId}&page=1&limit=50`,
+        `/api/search/queries?text=${encodeURIComponent(searchText)}&run_id=${runId}&page=1&limit=50`
       );
-      // Convert search results to DataViewer format
+
       const convertedData: DataViewerData = {
         queries: searchResults.items.map((item) => ({
           id: item.query.id,
@@ -127,14 +115,12 @@ export function ClusterQueriesClient({
           query_text: item.query.query_text,
           language: item.query.language ?? null,
           timestamp: item.query.timestamp ?? null,
-          clusters: item.clusters.map(
-            (c: components["schemas"]["ClusterInfo"]) => ({
-              cluster_id: c.cluster_id,
-              run_id: c.run_id,
-              title: c.title ?? null,
-              confidence_score: c.confidence_score,
-            }),
-          ),
+          clusters: item.clusters.map((c: components["schemas"]["ClusterInfo"]) => ({
+            cluster_id: c.cluster_id,
+            run_id: c.run_id,
+            title: c.title ?? null,
+            confidence_score: c.confidence_score,
+          })),
         })),
         total: searchResults.total,
         page: searchResults.page ?? 1,
@@ -142,10 +128,9 @@ export function ClusterQueriesClient({
         limit: 50,
       };
       setData(convertedData);
-      router.push(
-        `/clusters/${runId}/${clusterId}?q=${encodeURIComponent(searchText)}`,
-        { scroll: false },
-      );
+      router.push(`/clusters/${runId}/${clusterId}?q=${encodeURIComponent(searchText)}`, {
+        scroll: false,
+      });
     });
   };
 
@@ -172,7 +157,7 @@ export function ClusterQueriesClient({
 
   return (
     <div className="space-y-4">
-      {/* Search Bar */}
+      {}
       <div className="flex gap-2">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -194,42 +179,28 @@ export function ClusterQueriesClient({
             </button>
           )}
         </div>
-        <Button
-          onClick={handleSearch}
-          disabled={!searchText.trim() || isPending}
-        >
+        <Button onClick={handleSearch} disabled={!searchText.trim() || isPending}>
           Search
         </Button>
         {isSearchMode && (
-          <Button
-            variant="outline"
-            onClick={handleClearSearch}
-            disabled={isPending}
-          >
+          <Button variant="outline" onClick={handleClearSearch} disabled={isPending}>
             Show All
           </Button>
         )}
       </div>
 
-      {/* Search Status */}
+      {}
       {isSearchMode && (
         <div className="text-sm text-muted-foreground bg-muted/50 px-3 py-2 rounded-md">
           Showing search results for:{" "}
-          <span className="font-medium text-foreground">
-            &ldquo;{currentSearchText}&rdquo;
-          </span>{" "}
-          — {data.total} {data.total === 1 ? "result" : "results"} found in this
-          cluster
+          <span className="font-medium text-foreground">&ldquo;{currentSearchText}&rdquo;</span> —{" "}
+          {data.total} {data.total === 1 ? "result" : "results"} found in this cluster
         </div>
       )}
 
-      {/* Query List */}
+      {}
       <div className={isPending ? "opacity-50 pointer-events-none" : ""}>
-        <DataViewer
-          data={data}
-          onPageChange={handlePageChange}
-          showClusters={false}
-        />
+        <DataViewer data={data} onPageChange={handlePageChange} showClusters={false} />
       </div>
     </div>
   );

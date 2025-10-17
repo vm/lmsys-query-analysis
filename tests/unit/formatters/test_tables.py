@@ -1,16 +1,16 @@
 """Unit tests for table formatters."""
 
-import pytest
 from rich.table import Table
+
 from lmsys_query_analysis.cli.formatters.tables import (
-    format_queries_table,
-    format_runs_table,
+    format_backfill_summary_table,
+    format_chroma_collections_table,
     format_cluster_summaries_table,
     format_loading_stats_table,
-    format_backfill_summary_table,
-    format_search_results_queries_table,
+    format_queries_table,
+    format_runs_table,
     format_search_results_clusters_table,
-    format_chroma_collections_table,
+    format_search_results_queries_table,
     format_verify_sync_table,
 )
 
@@ -18,23 +18,23 @@ from lmsys_query_analysis.cli.formatters.tables import (
 def test_format_queries_table(sample_queries):
     """Test formatting queries as a table."""
     table = format_queries_table(sample_queries)
-    
+
     assert isinstance(table, Table)
     assert table.title == "Queries (5 shown)"
-    assert len(table.columns) == 4  # ID, Model, Query, Language
+    assert len(table.columns) == 4
 
 
 def test_format_queries_table_with_custom_title(sample_queries):
     """Test formatting queries with custom title."""
     table = format_queries_table(sample_queries, title="Custom Title")
-    
+
     assert table.title == "Custom Title"
 
 
 def test_format_queries_table_empty():
     """Test formatting empty query list."""
     table = format_queries_table([])
-    
+
     assert isinstance(table, Table)
     assert table.title == "Queries (0 shown)"
 
@@ -43,44 +43,39 @@ def test_format_runs_table(sample_clustering_run):
     """Test formatting clustering runs as a table."""
     runs = [sample_clustering_run]
     table = format_runs_table(runs, latest=False)
-    
+
     assert isinstance(table, Table)
     assert table.title == "Clustering Runs"
-    assert len(table.columns) == 5  # Run ID, Algorithm, Clusters, Created, Description
+    assert len(table.columns) == 5
 
 
 def test_format_runs_table_latest(sample_clustering_run):
     """Test formatting latest run with different title."""
     runs = [sample_clustering_run]
     table = format_runs_table(runs, latest=True)
-    
+
     assert table.title == "Latest Clustering Run"
 
 
 def test_format_cluster_summaries_table(sample_cluster_summaries):
     """Test formatting cluster summaries as a table."""
     table = format_cluster_summaries_table(
-        sample_cluster_summaries,
-        run_id="test-run-001",
-        show_examples=0
+        sample_cluster_summaries, run_id="test-run-001", show_examples=0
     )
-    
+
     assert isinstance(table, Table)
     assert table.title == "Clusters for Run: test-run-001"
-    assert len(table.columns) == 4  # Cluster, Title, Queries, Description
+    assert len(table.columns) == 4
 
 
 def test_format_cluster_summaries_table_with_examples(sample_cluster_summaries):
     """Test formatting cluster summaries with example queries."""
     table = format_cluster_summaries_table(
-        sample_cluster_summaries,
-        run_id="test-run-001",
-        show_examples=2,
-        example_width=80
+        sample_cluster_summaries, run_id="test-run-001", show_examples=2, example_width=80
     )
-    
+
     assert isinstance(table, Table)
-    assert len(table.columns) == 5  # Adds Examples column
+    assert len(table.columns) == 5
 
 
 def test_format_loading_stats_table():
@@ -91,91 +86,78 @@ def test_format_loading_stats_table():
         "skipped": 40,
         "errors": 10,
     }
-    
+
     table = format_loading_stats_table(stats)
-    
+
     assert isinstance(table, Table)
     assert table.title == "Loading Statistics"
-    assert len(table.columns) == 2  # Metric, Count
+    assert len(table.columns) == 2
 
 
 def test_format_backfill_summary_table():
     """Test formatting backfill summary."""
     table = format_backfill_summary_table(
-        scanned=1000,
-        backfilled=200,
-        already_present=800,
-        elapsed=45.5,
-        rate=21.98
+        scanned=1000, backfilled=200, already_present=800, elapsed=45.5, rate=21.98
     )
-    
+
     assert isinstance(table, Table)
     assert table.title == "Backfill Summary"
-    assert len(table.columns) == 2  # Metric, Count
+    assert len(table.columns) == 2
 
 
 def test_format_queries_table_truncates_long_text(sample_queries):
     """Test that long query text is truncated."""
-    # Add a query with very long text
     from lmsys_query_analysis.db.models import Query
-    
+
     long_query = Query(
         id="q_long",
-        query_text="A" * 200,  # Very long query
+        query_text="A" * 200,
         model="gpt-4",
         language="en",
         conversation_id="conv_long",
     )
-    
+
     queries = sample_queries + [long_query]
     table = format_queries_table(queries)
-    
-    # Should truncate to 80 chars
+
     assert isinstance(table, Table)
 
 
 def test_format_search_results_queries_table():
     """Test formatting search results for queries."""
     from types import SimpleNamespace
-    
-    # Create mock query hits
+
     hits = [
         SimpleNamespace(
-            query_id=1,
-            snippet="How do I write a Python function?",
-            model="gpt-4",
-            distance=0.123
+            query_id=1, snippet="How do I write a Python function?", model="gpt-4", distance=0.123
         ),
         SimpleNamespace(
-            query_id=2,
-            snippet="What is machine learning?",
-            model="claude-3",
-            distance=0.234
+            query_id=2, snippet="What is machine learning?", model="claude-3", distance=0.234
         ),
     ]
-    
+
     table = format_search_results_queries_table(hits)
-    
+
     assert isinstance(table, Table)
     assert table.title == "Top 2 Similar Queries"
-    assert len(table.columns) == 5  # Rank, Query ID, Query Text, Model, Distance
+    assert len(table.columns) == 5
 
 
 def test_format_search_results_queries_table_long_text():
     """Test that search results truncate long queries."""
     from types import SimpleNamespace
-    
+
     hits = [
         SimpleNamespace(
             query_id=1,
-            snippet="A" * 100,  # Very long snippet
+            snippet="A" * 100,
             model="gpt-4",
-            distance=0.1
+            distance=0.1,
         ),
     ]
-    
+
     table = format_search_results_queries_table(hits)
-    
+
     assert isinstance(table, Table)
     assert table.title == "Top 1 Similar Queries"
 
@@ -183,61 +165,52 @@ def test_format_search_results_queries_table_long_text():
 def test_format_search_results_queries_table_missing_model():
     """Test search results with missing model."""
     from types import SimpleNamespace
-    
+
     hits = [
         SimpleNamespace(
             query_id=1,
             snippet="Test query",
-            model=None,  # Missing model
-            distance=0.1
+            model=None,
+            distance=0.1,
         ),
     ]
-    
+
     table = format_search_results_queries_table(hits)
-    
+
     assert isinstance(table, Table)
 
 
 def test_format_search_results_clusters_table():
     """Test formatting search results for clusters."""
     from types import SimpleNamespace
-    
+
     hits = [
-        SimpleNamespace(
-            cluster_id=0,
-            title="Python Programming",
-            distance=0.123
-        ),
-        SimpleNamespace(
-            cluster_id=1,
-            title="Machine Learning",
-            distance=0.234
-        ),
+        SimpleNamespace(cluster_id=0, title="Python Programming", distance=0.123),
+        SimpleNamespace(cluster_id=1, title="Machine Learning", distance=0.234),
     ]
-    
+
     table = format_search_results_clusters_table(hits)
-    
+
     assert isinstance(table, Table)
     assert table.title == "Top 2 Similar Clusters"
-    assert len(table.columns) == 4  # Rank, Cluster, Title, Distance
+    assert len(table.columns) == 4
 
 
 def test_format_search_results_clusters_table_missing_title():
     """Test cluster search results with missing title."""
     from types import SimpleNamespace
-    
+
     hits = [
         SimpleNamespace(
             cluster_id=0,
-            title=None,  # Missing title
-            distance=0.1
+            title=None,
+            distance=0.1,
         ),
     ]
-    
+
     table = format_search_results_clusters_table(hits)
-    
+
     assert isinstance(table, Table)
-    # Should handle None title gracefully
 
 
 def test_format_chroma_collections_table():
@@ -250,7 +223,7 @@ def test_format_chroma_collections_table():
                 "embedding_provider": "openai",
                 "embedding_model": "text-embedding-3-small",
                 "embedding_dimension": 1536,
-            }
+            },
         },
         {
             "name": "summaries",
@@ -259,15 +232,15 @@ def test_format_chroma_collections_table():
                 "embedding_provider": "cohere",
                 "embedding_model": "embed-english-v3.0",
                 "embedding_dimension": 1024,
-            }
-        }
+            },
+        },
     ]
-    
+
     table = format_chroma_collections_table(collections)
-    
+
     assert isinstance(table, Table)
-    assert table.title == "Chroma Collections"  # Fixed: correct title
-    assert len(table.columns) == 6  # Name, Count, Provider, Model, Dim, Description
+    assert table.title == "Chroma Collections"
+    assert len(table.columns) == 6
 
 
 def test_format_chroma_collections_table_missing_metadata():
@@ -276,12 +249,12 @@ def test_format_chroma_collections_table_missing_metadata():
         {
             "name": "queries",
             "count": 100,
-            "metadata": {}  # Empty metadata
+            "metadata": {},
         },
     ]
-    
+
     table = format_chroma_collections_table(collections)
-    
+
     assert isinstance(table, Table)
 
 
@@ -307,12 +280,12 @@ def test_format_verify_sync_table():
             "2 summaries missing from Chroma",
         ],
     }
-    
+
     table = format_verify_sync_table(report)
-    
+
     assert isinstance(table, Table)
     assert "test-run-001" in table.title
-    assert len(table.columns) == 2  # Field, Value
+    assert len(table.columns) == 2
 
 
 def test_format_verify_sync_table_no_issues():
@@ -335,9 +308,7 @@ def test_format_verify_sync_table_no_issues():
         "status": "In sync",
         "issues": [],
     }
-    
-    table = format_verify_sync_table(report)
-    
-    assert isinstance(table, Table)
-    # Should show that everything is in sync
 
+    table = format_verify_sync_table(report)
+
+    assert isinstance(table, Table)

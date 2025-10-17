@@ -35,7 +35,8 @@ interface DataViewerProps {
   data: DataViewerData;
   onPageChange: (page: number) => void;
   showClusters?: boolean;
-  filterRunId?: string; // Filter clusters to only show those from this run
+  filterRunId?: string;
+
 }
 
 export function DataViewer({
@@ -45,9 +46,7 @@ export function DataViewer({
   filterRunId,
 }: DataViewerProps) {
   const { queries, page, pages, total } = data;
-  const [expandedQueries, setExpandedQueries] = useState<Set<number>>(
-    new Set(),
-  );
+  const [expandedQueries, setExpandedQueries] = useState<Set<number>>(new Set());
 
   const toggleExpand = (queryId: number) => {
     setExpandedQueries((prev) => {
@@ -99,20 +98,16 @@ export function DataViewer({
         <div className="space-y-3 p-4">
           {queries.map((query) => {
             const isExpanded = expandedQueries.has(query.id);
-            const displayText = isExpanded
-              ? query.query_text
-              : truncateText(query.query_text);
+            const displayText = isExpanded ? query.query_text : truncateText(query.query_text);
             const needsTruncation = query.query_text.length > 200;
 
             return (
               <Card key={query.id}>
                 <CardContent className="pt-4">
                   <div className="space-y-3">
-                    {/* Query Text */}
+                    {}
                     <div className="space-y-2">
-                      <p className="text-sm whitespace-pre-wrap">
-                        {displayText}
-                      </p>
+                      <p className="text-sm whitespace-pre-wrap">{displayText}</p>
                       {needsTruncation && (
                         <Button
                           variant="ghost"
@@ -135,7 +130,7 @@ export function DataViewer({
                       )}
                     </div>
 
-                    {/* Metadata Row */}
+                    {}
                     <div className="flex items-start justify-between gap-2 flex-wrap">
                       <div className="flex gap-2 items-center flex-wrap">
                         {query.model && (
@@ -151,16 +146,14 @@ export function DataViewer({
                       </div>
                     </div>
 
-                    {/* Cluster Associations */}
+                    {}
                     {showClusters &&
                       query.clusters &&
                       query.clusters.length > 0 &&
                       (() => {
-                        // Filter clusters by run if filterRunId is provided
+
                         const displayClusters = filterRunId
-                          ? query.clusters.filter(
-                              (c) => c.run_id === filterRunId,
-                            )
+                          ? query.clusters.filter((c) => c.run_id === filterRunId)
                           : query.clusters;
 
                         if (displayClusters.length === 0) return null;
@@ -180,8 +173,7 @@ export function DataViewer({
                                     variant="default"
                                     className="text-xs hover:bg-primary/80 cursor-pointer"
                                   >
-                                    {cluster.title ||
-                                      `Cluster ${cluster.cluster_id}`}
+                                    {cluster.title || `Cluster ${cluster.cluster_id}`}
                                     <ExternalLink className="ml-1 h-3 w-3" />
                                   </Badge>
                                 </Link>
@@ -191,22 +183,17 @@ export function DataViewer({
                         );
                       })()}
 
-                    {/* Query Metadata */}
+                    {}
                     <div className="flex gap-4 text-xs text-muted-foreground pt-2 border-t">
                       <span>ID: {query.id}</span>
-                      <span>
-                        Conversation: {query.conversation_id.substring(0, 8)}...
-                      </span>
+                      <span>Conversation: {query.conversation_id.substring(0, 8)}...</span>
                       {query.timestamp && (
                         <span>
-                          {new Date(query.timestamp).toLocaleDateString(
-                            "en-US",
-                            {
-                              year: "numeric",
-                              month: "short",
-                              day: "numeric",
-                            },
-                          )}
+                          {new Date(query.timestamp).toLocaleDateString("en-US", {
+                            year: "numeric",
+                            month: "short",
+                            day: "numeric",
+                          })}
                         </span>
                       )}
                     </div>

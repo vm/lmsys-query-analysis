@@ -9,28 +9,26 @@ Implements Anthropic's Clio-style hierarchical clustering approach:
 6. Repeat for multiple hierarchy levels
 """
 
-from typing import List, Optional, Dict, Tuple
 import logging
 from datetime import datetime
 
-import numpy as np
 import anyio
 import instructor
+import numpy as np
+from aiolimiter import AsyncLimiter
 from pydantic import BaseModel, Field
 from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
+from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn, TextColumn
 from sklearn.cluster import MiniBatchKMeans
-from .embeddings import EmbeddingGenerator
-from aiolimiter import AsyncLimiter
 from tenacity import retry, stop_after_attempt, wait_exponential
+
+from .embeddings import EmbeddingGenerator
 
 console = Console()
 logger = logging.getLogger(__name__)
 
 
-# ==============================================================================
-# Pydantic Models for Structured LLM Responses
-# ==============================================================================
+
 
 class NeighborhoodCategories(BaseModel):
     """Response for generating higher-level categories from a neighborhood of clusters."""
@@ -43,7 +41,7 @@ class NeighborhoodCategories(BaseModel):
 
         Keep to 1-2 paragraphs maximum. Think like the Anthropic Education Report - create frameworks, not just lists."""
     )
-    categories: List[str] = Field(
+    categories: list[str] = Field(
         description="""List of broader category names based on behavioral patterns and user segments.
 
         Requirements:
@@ -78,21 +76,21 @@ class NeighborhoodCategories(BaseModel):
         - "Users Automating Tasks" ❌
         """,
         min_length=8,
-        max_length=100
+        max_length=100,
     )
 
 
 class DeduplicatedClusters(BaseModel):
     """Response for deduplicating similar cluster names globally."""
 
-    clusters: List[str] = Field(
+    clusters: list[str] = Field(
         description="""Deduplicated list of distinct cluster names.
 
         Merge similar or overlapping names while preserving diversity.
         When merging, choose the most specific and descriptive name.
         Ensure remaining clusters are clearly distinct from each other.
         """,
-        min_length=1
+        min_length=1,
     )
 
 
@@ -160,18 +158,14 @@ class RefinedClusterSummary(BaseModel):
         - "Various Programming Topics" ❌
         - "General Development Queries" ❌
         """,
-        max_length=100
+        max_length=100,
     )
 
 
-# ==============================================================================
-# Neighborhood Clustering Helper
-# ==============================================================================
+
 
 def create_neighborhoods(
-    embeddings: np.ndarray,
-    n_neighborhoods: int,
-    random_state: int = 42
+    embeddings: np.ndarray, n_neighborhoods: int, random_state: int = 42
 ) -> np.ndarray:
     """Cluster embeddings into neighborhoods using MiniBatchKMeans.
 
@@ -184,25 +178,16 @@ def create_neighborhoods(
         Array of neighborhood labels (N,)
     """
     clusterer = MiniBatchKMeans(
-        n_clusters=n_neighborhoods,
-        random_state=random_state,
-        batch_size=1000
+        n_clusters=n_neighborhoods, random_state=random_state, batch_size=1000
     )
     return clusterer.fit_predict(embeddings)
 
 
-# ==============================================================================
-# LLM Prompt Functions (Using Instructor)
-# ==============================================================================
 
-@retry(
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=2, max=10)
-)
+
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
 async def generate_neighborhood_categories(
-    client: instructor.AsyncInstructor,
-    clusters: List[Dict[str, str]],
-    target_count: int = 10
+    client: instructor.AsyncInstructor, clusters: list[dict[str, str]], target_count: int = 10
 ) -> NeighborhoodCategories:
     """Generate higher-level category names for a neighborhood of clusters.
 
@@ -214,10 +199,9 @@ async def generate_neighborhood_categories(
     Returns:
         NeighborhoodCategories with scratchpad and category list
     """
-    cluster_str = "\n".join([
-        f"<cluster>{c['title']}: {c['description']}</cluster>"
-        for c in clusters
-    ])
+    cluster_str = "\n".join(
+        [f"<cluster>{c['title']}: {c['description']}</cluster>" for c in clusters]
+    )
 
     system_prompt = """You are a behavioral researcher and taxonomist analyzing how people interact with LLMs. Your goal is to create a framework that reveals user mental models, behaviors, and product opportunities - not just topic categories.
 
@@ -262,21 +246,16 @@ Then provide your category names focusing on user behavior and mental models."""
         response_model=NeighborhoodCategories,
         messages=[
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
-        ]
+            {"role": "user", "content": user_prompt},
+        ],
     )
 
     return response
 
 
-@retry(
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=2, max=10)
-)
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
 async def deduplicate_cluster_names(
-    client: instructor.AsyncInstructor,
-    candidate_names: List[str],
-    target_count: int
+    client: instructor.AsyncInstructor, candidate_names: list[str], target_count: int
 ) -> DeduplicatedClusters:
     """Deduplicate similar cluster names to create distinct categories.
 
@@ -328,21 +307,16 @@ Acceptable range is wide - QUALITY (specificity) matters more than QUANTITY (hit
         response_model=DeduplicatedClusters,
         messages=[
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
-        ]
+            {"role": "user", "content": user_prompt},
+        ],
     )
 
     return response
 
 
-@retry(
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=2, max=10)
-)
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
 async def assign_to_parent_cluster(
-    client: instructor.AsyncInstructor,
-    child_cluster: Dict[str, str],
-    parent_candidates: List[str]
+    client: instructor.AsyncInstructor, child_cluster: dict[str, str], parent_candidates: list[str]
 ) -> ClusterAssignment:
     """Assign a child cluster to the best-fit parent category.
 
@@ -367,8 +341,8 @@ First, here are the ONLY valid higher-level clusters you may select from:
 
 Here is the specific cluster to categorize:
 <specific_cluster>
-Title: {child_cluster['title']}
-Description: {child_cluster['description']}
+Title: {child_cluster["title"]}
+Description: {child_cluster["description"]}
 </specific_cluster>
 
 RULES:
@@ -388,25 +362,23 @@ CLASSIFICATION PROCESS:
 
 Use <scratchpad> for reasoning (2-4 sentences), then provide the exact parent cluster name."""
 
-    logger.debug(f"Assigning '{child_cluster['title'][:60]}...' to one of {len(parent_candidates)} parent options")
+    logger.debug(
+        f"Assigning '{child_cluster['title'][:60]}...' to one of {len(parent_candidates)} parent options"
+    )
     response = await client.chat.completions.create(
         response_model=ClusterAssignment,
         messages=[
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
-        ]
+            {"role": "user", "content": user_prompt},
+        ],
     )
     logger.debug(f"  → Assigned to: '{response.assigned_cluster}'")
     return response
 
 
-@retry(
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=2, max=10)
-)
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
 async def refine_parent_cluster(
-    client: instructor.AsyncInstructor,
-    child_clusters: List[str]
+    client: instructor.AsyncInstructor, child_clusters: list[str]
 ) -> RefinedClusterSummary:
     """Refine a parent cluster's title and description based on its children.
 
@@ -480,19 +452,17 @@ Example BAD (too generic):
         response_model=RefinedClusterSummary,
         messages=[
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
-        ]
+            {"role": "user", "content": user_prompt},
+        ],
     )
 
     return response
 
 
-# ==============================================================================
-# Core Hierarchical Merging Algorithm
-# ==============================================================================
+
 
 async def merge_clusters_hierarchical(
-    base_clusters: List[Dict],
+    base_clusters: list[dict],
     run_id: str,
     embedding_model: str = "text-embedding-3-small",
     embedding_provider: str = "openai",
@@ -502,8 +472,8 @@ async def merge_clusters_hierarchical(
     merge_ratio: float = 0.35,  # Changed from 0.2 to 0.35 to reduce over-merging
     neighborhood_size: int = 20,  # Changed from 40 to 20 for more specific categories
     concurrency: int = 50,
-    rpm: Optional[int] = None
-) -> Tuple[str, List[Dict]]:
+    rpm: int | None = None,
+) -> tuple[str, list[dict]]:
     """Perform hierarchical merging of clusters using LLM-driven categorization.
 
     Implements Clio-style algorithm:
@@ -531,7 +501,7 @@ async def merge_clusters_hierarchical(
         Tuple of (hierarchy_run_id, hierarchy_list)
         where hierarchy_list contains dicts with hierarchy metadata
     """
-    
+
     logger.info(
         f"Starting hierarchical merging: {len(base_clusters)} base clusters "
         f"→ {target_levels} levels with {merge_ratio:.1%} merge ratio per level"
@@ -541,71 +511,61 @@ async def merge_clusters_hierarchical(
         f"concurrency={concurrency}, rpm={rpm or 'unlimited'}"
     )
 
-    # Create hierarchy run ID
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     hierarchy_run_id = f"hier-{run_id}-{timestamp}"
 
-    # Initialize embedding model
     logger.info(f"Loading embedding model: {embedding_provider}/{embedding_model}")
     if embedding_provider == "cohere":
         embedder = EmbeddingGenerator(
             model_name=embedding_model,
             provider=embedding_provider,
             output_dimension=256,  # Cohere v4 with 256 dims
-            concurrency=100
+            concurrency=100,
         )
     else:
         embedder = EmbeddingGenerator(
-            model_name=embedding_model,
-            provider=embedding_provider,
-            concurrency=100
+            model_name=embedding_model, provider=embedding_provider, concurrency=100
         )
 
-    # Initialize LLM client
     logger.info(f"Initializing LLM: {llm_provider}/{llm_model}")
 
-    # Build full model string for instructor (e.g., "openai/gpt-4o-mini")
     full_model = f"{llm_provider}/{llm_model}"
     client = instructor.from_provider(full_model, async_client=True)
 
-    # Rate limiter
     limiter = None
     if rpm:
         limiter = AsyncLimiter(rpm, 60.0)
 
-    # Initialize hierarchy storage
     hierarchy = []
     logger.info(f"Initialized hierarchy: {hierarchy_run_id}")
 
-    # Level 0: Add base clusters as leaves
     logger.info(f"Building level 0 with {len(base_clusters)} leaf clusters")
     for cluster in base_clusters:
-        hierarchy.append({
-            "hierarchy_run_id": hierarchy_run_id,
-            "run_id": run_id,
-            "cluster_id": cluster["cluster_id"],
-            "parent_cluster_id": None,
-            "level": 0,
-            "children_ids": [],
-            "title": cluster["title"],
-            "description": cluster["description"]
-        })
+        hierarchy.append(
+            {
+                "hierarchy_run_id": hierarchy_run_id,
+                "run_id": run_id,
+                "cluster_id": cluster["cluster_id"],
+                "parent_cluster_id": None,
+                "level": 0,
+                "children_ids": [],
+                "title": cluster["title"],
+                "description": cluster["description"],
+            }
+        )
 
-    # Current level clusters (start with base)
     current_clusters = base_clusters
     current_level = 0
     next_cluster_id = max(c["cluster_id"] for c in base_clusters) + 1
     logger.debug(f"Next available cluster ID: {next_cluster_id}")
 
-    # Build hierarchy iteratively
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
         BarColumn(),
         TaskProgressColumn(),
-        console=console
+        console=console,
     ) as progress:
-
         while current_level < target_levels - 1:
             n_current = len(current_clusters)
             n_target = max(int(n_current * merge_ratio), 2)
@@ -617,31 +577,28 @@ async def merge_clusters_hierarchical(
             )
 
             task = progress.add_task(
-                f"Merging level {current_level} -> {current_level + 1}",
-                total=n_current
+                f"Merging level {current_level} -> {current_level + 1}", total=n_current
             )
 
-            # Step 1: Embed cluster summaries
             logger.info(f"Step 1/4: Embedding {n_current} cluster summaries...")
             texts = [f"{c['title']}: {c['description']}" for c in current_clusters]
-            
-            embeddings = await embedder.generate_embeddings_async(texts, batch_size=96, show_progress=False)
 
-            # Step 2: Create neighborhoods
+            embeddings = await embedder.generate_embeddings_async(
+                texts, batch_size=96, show_progress=False
+            )
+
             n_neighborhoods = max(n_current // neighborhood_size, 1)
             avg_neighborhood_size = n_current / n_neighborhoods
             logger.info(
                 f"Step 2/4: Creating {n_neighborhoods} neighborhoods "
                 f"(avg size: {avg_neighborhood_size:.1f} clusters)"
             )
-            
+
             neighborhood_labels = create_neighborhoods(embeddings, n_neighborhoods)
 
-            # Step 3: Generate higher-level categories per neighborhood (parallelized)
             logger.info(f"Step 3/4: Generating categories from {n_neighborhoods} neighborhoods...")
             all_candidates = []
 
-            # Prepare neighborhood data
             neighborhood_data = []
             for neigh_id in range(n_neighborhoods):
                 neigh_clusters = [
@@ -651,15 +608,20 @@ async def merge_clusters_hierarchical(
                 ]
                 target_cat = int(len(neigh_clusters) * merge_ratio)
                 neighborhood_data.append((neigh_id, neigh_clusters, target_cat))
-                logger.debug(f"  Neighborhood {neigh_id + 1}/{n_neighborhoods}: {len(neigh_clusters)} clusters → {target_cat} categories")
+                logger.debug(
+                    f"  Neighborhood {neigh_id + 1}/{n_neighborhoods}: {len(neigh_clusters)} clusters → {target_cat} categories"
+                )
 
-            # Worker function for parallel neighborhood processing
-            async def process_neighborhood(neigh_id: int, neigh_clusters: List[Dict], target_cat: int):
+            semaphore = anyio.Semaphore(concurrency)
+
+            async def process_neighborhood(
+                neigh_id: int, neigh_clusters: list[dict], target_cat: int, sem=semaphore, lim=limiter
+            ):
                 """Process a single neighborhood and return results."""
-                async with semaphore:
+                async with sem:
                     try:
-                        if limiter:
-                            async with limiter:
+                        if lim:
+                            async with lim:
                                 categories = await generate_neighborhood_categories(
                                     client, neigh_clusters, target_count=target_cat
                                 )
@@ -667,66 +629,55 @@ async def merge_clusters_hierarchical(
                             categories = await generate_neighborhood_categories(
                                 client, neigh_clusters, target_count=target_cat
                             )
-                        
-                        logger.info(f"  Neighborhood {neigh_id + 1}: generated {len(categories.categories)} categories")
-                        # Show the generated category names at debug level
+
+                        logger.info(
+                            f"  Neighborhood {neigh_id + 1}: generated {len(categories.categories)} categories"
+                        )
                         for cat_name in categories.categories:
                             logger.debug(f"    • {cat_name}")
-                        
+
                         return neigh_id, categories.categories
                     except Exception as e:
                         logger.error(f"Failed to process neighborhood {neigh_id + 1}: {e}")
                         raise
 
-            # Run all neighborhoods in parallel with concurrency control
-            semaphore = anyio.Semaphore(concurrency)
-            
-            # Execute all neighborhoods in parallel
             tasks = [
                 process_neighborhood(neigh_id, neigh_clusters, target_cat)
                 for neigh_id, neigh_clusters, target_cat in neighborhood_data
             ]
-            
+
             import asyncio
+
             results = await asyncio.gather(*tasks)
-            
-            # Sort results by neighborhood ID to maintain order
+
             results.sort(key=lambda x: x[0])
-            
-            # Collect all candidates
-            for neigh_id, categories in results:
+
+            for _neigh_id, categories in results:
                 all_candidates.extend(categories)
 
             logger.info(
                 f"  Generated {len(all_candidates)} total candidates "
                 f"({len(all_candidates) / n_neighborhoods:.1f} per neighborhood)"
             )
-            # Step 4: Deduplicate globally (with validation)
             logger.info(
                 f"Step 4/4: Deduplicating {len(all_candidates)} candidates "
                 f"→ ~{n_target} parent clusters..."
             )
 
-            # Calculate min/max bounds for parent count to prevent over-merging
-            # We want roughly n_target, but allow up to 50% more to preserve specificity
-            # Changed from 1.3x to 1.5x to allow more specific categories
             min_parents = max(n_target, int(n_current * merge_ratio * 0.85))
             max_parents = int(n_target * 1.5)  # Increased from 1.3 to 1.5
-            logger.debug(f"  Target parent range: {min_parents}-{max_parents} (aiming for {n_target}, prefer higher end)")
+            logger.debug(
+                f"  Target parent range: {min_parents}-{max_parents} (aiming for {n_target}, prefer higher end)"
+            )
 
             if limiter:
                 async with limiter:
-                    dedup_result = await deduplicate_cluster_names(
-                        client, all_candidates, n_target
-                    )
+                    dedup_result = await deduplicate_cluster_names(client, all_candidates, n_target)
             else:
-                dedup_result = await deduplicate_cluster_names(
-                    client, all_candidates, n_target
-                )
+                dedup_result = await deduplicate_cluster_names(client, all_candidates, n_target)
 
             parent_names = dedup_result.clusters
 
-            # Validate deduplication didn't over-merge
             if len(parent_names) < min_parents:
                 error_msg = (
                     f"OVER-MERGING DETECTED: Deduplication created {len(parent_names)} parents "
@@ -745,27 +696,24 @@ async def merge_clusters_hierarchical(
                 f"  Deduplicated: {len(all_candidates)} candidates → {len(parent_names)} unique parents "
                 f"(removed {len(all_candidates) - len(parent_names)} duplicates)"
             )
-            # Show parent names at debug level (can be a long list)
             logger.debug("  Final parent cluster names:")
             for i, parent_name in enumerate(parent_names, 1):
                 logger.debug(f"    {i}. {parent_name}")
 
-            # Step 5: Assign children to parents (parallelized)
-            # Use maximum concurrency for assignment step (embarrassingly parallel)
             assignment_concurrency = min(concurrency * 5, 50)  # 5x higher, max 50
-            logger.info(f"Assigning {n_current} children to {len(parent_names)} parents (concurrency={assignment_concurrency})...")
+            logger.info(
+                f"Assigning {n_current} children to {len(parent_names)} parents (concurrency={assignment_concurrency})..."
+            )
             parent_children = {name: [] for name in parent_names}
             assignment_errors = []
             semaphore = anyio.Semaphore(assignment_concurrency)
             assignments = []
 
-            # Worker function for parallel assignments
-            async def assign_worker(cluster):
-                async with semaphore:
+            async def assign_worker(cluster, sem=semaphore, p_names=parent_names, assigns=assignments, prog_task=task):
+                async with sem:
                     try:
-                        # Remove rate limiting for assignment step to maximize throughput
-                        assignment = await assign_to_parent_cluster(client, cluster, parent_names)
-                        assignments.append((cluster, assignment))
+                        assignment = await assign_to_parent_cluster(client, cluster, p_names)
+                        assigns.append((cluster, assignment))
                     except Exception as e:
                         logger.error(
                             f"Failed to assign cluster {cluster['cluster_id']} "
@@ -773,14 +721,12 @@ async def merge_clusters_hierarchical(
                         )
                         raise
                     finally:
-                        progress.update(task, advance=1)
+                        progress.update(prog_task, advance=1)
 
-            # Run all assignments in parallel
             async with anyio.create_task_group() as tg:
                 for cluster in current_clusters:
                     tg.start_soon(assign_worker, cluster)
 
-            # Validate and organize assignments
             for cluster, assignment in assignments:
                 if assignment.assigned_cluster not in parent_children:
                     error_msg = (
@@ -789,19 +735,21 @@ async def merge_clusters_hierarchical(
                         f"Valid parents: {parent_names}"
                     )
                     logger.error(error_msg)
-                    assignment_errors.append({
-                        "cluster_id": cluster["cluster_id"],
-                        "cluster_title": cluster["title"],
-                        "invalid_parent": assignment.assigned_cluster,
-                        "valid_parents": parent_names
-                    })
-                    # Assign to first parent as fallback
+                    assignment_errors.append(
+                        {
+                            "cluster_id": cluster["cluster_id"],
+                            "cluster_title": cluster["title"],
+                            "invalid_parent": assignment.assigned_cluster,
+                            "valid_parents": parent_names,
+                        }
+                    )
                     parent_children[parent_names[0]].append(cluster["cluster_id"])
-                    logger.warning(f"Falling back to parent '{parent_names[0]}' for cluster {cluster['cluster_id']}")
+                    logger.warning(
+                        f"Falling back to parent '{parent_names[0]}' for cluster {cluster['cluster_id']}"
+                    )
                 else:
                     parent_children[assignment.assigned_cluster].append(cluster["cluster_id"])
 
-            # Report assignment validation results
             valid_count = len(current_clusters) - len(assignment_errors)
             if assignment_errors:
                 error_rate = len(assignment_errors) / len(current_clusters) * 100
@@ -811,19 +759,21 @@ async def merge_clusters_hierarchical(
                 )
                 logger.warning("Sample errors (showing first 3):")
                 for err in assignment_errors[:3]:
-                    logger.warning(f"  Cluster {err['cluster_id']}: invalid parent '{err['invalid_parent']}'")
+                    logger.warning(
+                        f"  Cluster {err['cluster_id']}: invalid parent '{err['invalid_parent']}'"
+                    )
             else:
                 logger.info(f"All {valid_count} cluster assignments validated successfully")
-            
-            # Show assignment distribution
-            avg_children = sum(len(children) for children in parent_children.values()) / len(parent_names)
+
+            avg_children = sum(len(children) for children in parent_children.values()) / len(
+                parent_names
+            )
             min_children = min(len(children) for children in parent_children.values())
             max_children = max(len(children) for children in parent_children.values())
             logger.info(
                 f"  Assignment distribution: avg={avg_children:.1f}, min={min_children}, max={max_children}"
             )
-            
-            # Show which parents got the most/least assignments
+
             sorted_parents = sorted(parent_children.items(), key=lambda x: len(x[1]), reverse=True)
             logger.debug("  Top 3 largest parent clusters:")
             for name, children in sorted_parents[:3]:
@@ -834,15 +784,15 @@ async def merge_clusters_hierarchical(
                     if len(children) > 0:
                         logger.debug(f"    '{name}': {len(children)} children")
 
-            # Validate that no parent has too many children (indicates overly generic category)
-            max_reasonable_children = int(avg_children * 2.0)  # Changed from 2.5x to 2.0x (stricter)
+            max_reasonable_children = int(
+                avg_children * 2.0
+            )  # Changed from 2.5x to 2.0x (stricter)
             oversized_parents = [
                 (name, len(children))
                 for name, children in parent_children.items()
                 if len(children) > max_reasonable_children
             ]
             if oversized_parents:
-                # Changed from warning to error if too many oversized parents
                 oversized_ratio = len(oversized_parents) / len(parent_names)
                 severity = "ERROR" if oversized_ratio > 0.2 else "WARNING"
 
@@ -873,68 +823,63 @@ async def merge_clusters_hierarchical(
                         f"or (3) using claude-sonnet-4-5-20250929 for better specificity"
                     )
 
-            # Step 6: Refine parent names based on children (parallelized)
-            # Use maximum concurrency for refinement step as well
             refinement_concurrency = min(concurrency * 3, 30)  # 3x higher, max 30
-            logger.info(f"Refining {len(parent_names)} parent clusters based on their children (concurrency={refinement_concurrency})...")
+            logger.info(
+                f"Refining {len(parent_names)} parent clusters based on their children (concurrency={refinement_concurrency})..."
+            )
             next_level_clusters = []
             refinement_results = []
             refine_semaphore = anyio.Semaphore(refinement_concurrency)
 
-            # Worker function for parallel refinements
-            async def refine_worker(parent_name, child_ids):
+            async def refine_worker(parent_name, child_ids, clusters=current_clusters, sem=refine_semaphore, results=refinement_results):
                 if not child_ids:
                     logger.warning(f"Skipping parent '{parent_name}' - has no children assigned")
                     return None
 
                 child_titles = [
-                    c["title"] for c in current_clusters if c["cluster_id"] in child_ids
+                    c["title"] for c in clusters if c["cluster_id"] in child_ids
                 ]
                 logger.debug(f"Refining '{parent_name[:50]}...' from {len(child_titles)} children")
 
                 try:
-                    async with refine_semaphore:
-                        # Remove rate limiting for refinement step to maximize throughput
+                    async with sem:
                         refined = await refine_parent_cluster(client, child_titles)
 
                     logger.info(f"  Refined: {len(child_titles)} clusters → '{refined.title}'")
-                    # Show all child titles at debug level (can be verbose)
                     logger.debug(f"    Children of '{refined.title}':")
                     for i, child_title in enumerate(child_titles, 1):
                         logger.debug(f"      {i}. {child_title}")
 
-                    refinement_results.append((parent_name, child_ids, child_titles, refined))
+                    results.append((parent_name, child_ids, child_titles, refined))
                 except Exception as e:
                     logger.error(f"Failed to refine parent '{parent_name[:50]}...': {e}")
                     raise
 
-            # Run all refinements in parallel
             async with anyio.create_task_group() as tg:
                 for parent_name in parent_names:
                     child_ids = parent_children[parent_name]
                     tg.start_soon(refine_worker, parent_name, child_ids)
 
-            # Process results and build hierarchy
-            for parent_name, child_ids, child_titles, refined in refinement_results:
+            for _parent_name, child_ids, _child_titles, refined in refinement_results:
                 if refined is None:
                     continue
 
                 parent_cluster_id = next_cluster_id
                 next_cluster_id += 1
 
-                # Add to hierarchy
-                hierarchy.append({
-                    "hierarchy_run_id": hierarchy_run_id,
-                    "run_id": run_id,
-                    "cluster_id": parent_cluster_id,
-                    "parent_cluster_id": None,  # Will be set in next iteration
-                    "level": current_level + 1,
-                    "children_ids": child_ids,
-                    "title": refined.title,
-                    "description": refined.summary
-                })
+                hierarchy.append(
+                    {
+                        "hierarchy_run_id": hierarchy_run_id,
+                        "run_id": run_id,
+                        "cluster_id": parent_cluster_id,
+                        "parent_cluster_id": None,  # Will be set in next iteration
+                        "level": current_level + 1,
+                        "children_ids": child_ids,
+                        "title": refined.title,
+                        "description": refined.summary,
+                    }
+                )
 
-                # Update children's parent_id with validation
                 children_found = 0
                 for child_id in child_ids:
                     child_found = False
@@ -945,32 +890,34 @@ async def merge_clusters_hierarchical(
                             child_found = True
                             break
                     if not child_found:
-                        logger.error(f"Child cluster {child_id} not found in hierarchy at level {current_level}")
+                        logger.error(
+                            f"Child cluster {child_id} not found in hierarchy at level {current_level}"
+                        )
 
-                # Validate all children were found
                 if children_found != len(child_ids):
                     logger.warning(
                         f"Parent cluster {parent_cluster_id} expected {len(child_ids)} children "
                         f"but only found {children_found} in hierarchy"
                     )
 
-                # Add to next level
-                next_level_clusters.append({
-                    "cluster_id": parent_cluster_id,
-                    "title": refined.title,
-                    "description": refined.summary
-                })
+                next_level_clusters.append(
+                    {
+                        "cluster_id": parent_cluster_id,
+                        "title": refined.title,
+                        "description": refined.summary,
+                    }
+                )
 
-            # Level complete summary
             logger.info(
                 f"Level {current_level} → {current_level + 1} complete: "
                 f"created {len(next_level_clusters)} parent clusters"
             )
 
-            # Move to next level
             current_clusters = next_level_clusters
             current_level += 1
-            logger.debug(f"Advanced to level {current_level}, next cluster ID will be {next_cluster_id}")
+            logger.debug(
+                f"Advanced to level {current_level}, next cluster ID will be {next_cluster_id}"
+            )
 
             if len(current_clusters) <= 1:
                 logger.info(
@@ -978,35 +925,37 @@ async def merge_clusters_hierarchical(
                     f"(target was {target_levels} levels)"
                 )
                 break
-            
-            logger.info(f"Continuing to level {current_level + 1} with {len(current_clusters)} clusters")
 
-    # Final validation: Check hierarchy integrity
+            logger.info(
+                f"Continuing to level {current_level + 1} with {len(current_clusters)} clusters"
+            )
+
     logger.info("=" * 60)
     logger.info("Validating hierarchy integrity...")
     validation_errors = []
-    
-    total_nodes = len(hierarchy)
-    levels = sorted(set(h["level"] for h in hierarchy))
-    logger.debug(f"Hierarchy summary: {total_nodes} total nodes across {len(levels)} levels: {levels}")
 
-    # Check 1: All base clusters have parents (except top level)
+    total_nodes = len(hierarchy)
+    levels = sorted({h["level"] for h in hierarchy})
+    logger.debug(
+        f"Hierarchy summary: {total_nodes} total nodes across {len(levels)} levels: {levels}"
+    )
+
     base_clusters_without_parents = [
-        h for h in hierarchy
-        if h["level"] == 0 and h["parent_cluster_id"] is None
+        h for h in hierarchy if h["level"] == 0 and h["parent_cluster_id"] is None
     ]
     if base_clusters_without_parents and current_level > 0:
         error = f"Found {len(base_clusters_without_parents)} leaf clusters without parents"
         validation_errors.append(error)
         logger.error(f"Validation check 1 failed: {error}")
 
-    # Check 2: All parent references are valid
     logger.debug("Check 2: Validating parent references...")
     cluster_ids = {h["cluster_id"] for h in hierarchy}
     invalid_refs = []
     for h in hierarchy:
         if h["parent_cluster_id"] is not None and h["parent_cluster_id"] not in cluster_ids:
-            error = f"Cluster {h['cluster_id']} references non-existent parent {h['parent_cluster_id']}"
+            error = (
+                f"Cluster {h['cluster_id']} references non-existent parent {h['parent_cluster_id']}"
+            )
             validation_errors.append(error)
             invalid_refs.append(error)
     if invalid_refs:
@@ -1014,7 +963,6 @@ async def merge_clusters_hierarchical(
         for ref in invalid_refs[:3]:  # Show first 3
             logger.error(f"  {ref}")
 
-    # Check 3: Children lists match actual parent assignments
     logger.debug("Check 3: Validating children lists...")
     mismatches = []
     for h in hierarchy:
@@ -1037,7 +985,6 @@ async def merge_clusters_hierarchical(
         for mm in mismatches[:3]:  # Show first 3
             logger.error(f"  {mm}")
 
-    # Check 4: Level consistency
     logger.debug("Check 4: Validating level consistency...")
     levels_found = {h["level"] for h in hierarchy}
     expected_levels = set(range(current_level + 1))
@@ -1052,19 +999,16 @@ async def merge_clusters_hierarchical(
         logger.error("=" * 60)
         raise ValueError(f"Hierarchy validation failed: {validation_errors}")
 
-    # Success! Log final statistics
     logger.info("=" * 60)
     logger.info("Hierarchy validation: ALL CHECKS PASSED")
     logger.info(f"Final hierarchy: {len(hierarchy)} nodes across {current_level + 1} levels")
-    
-    # Count nodes per level
+
     for level in range(current_level + 1):
         count = sum(1 for h in hierarchy if h["level"] == level)
         logger.info(f"  Level {level}: {count} clusters")
-    
+
     logger.info(f"Hierarchy run ID: {hierarchy_run_id}")
     logger.info("=" * 60)
-    
-    # Print timing summary
-    
+
+
     return hierarchy_run_id, hierarchy

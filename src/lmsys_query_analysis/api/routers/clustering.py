@@ -1,20 +1,19 @@
 """Clustering endpoints for managing and querying clustering runs."""
 
-from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
+from ...db.connection import Database
+from ...db.models import QueryCluster
+from ...services import cluster_service, run_service
 from ..dependencies import get_db
 from ..schemas import (
-    ClusteringRunListResponse,
     ClusteringRunDetail,
+    ClusteringRunListResponse,
     ClusteringRunStatusResponse,
     ClusterListResponse,
     ClusterSummaryResponse,
     ErrorResponse,
 )
-from ...db.connection import Database
-from ...services import run_service, cluster_service
-from ...db.models import QueryCluster
 
 router = APIRouter()
 
@@ -25,7 +24,7 @@ router = APIRouter()
     summary="List all clustering runs",
 )
 async def list_runs(
-    algorithm: Optional[str] = Query(None, description="Filter by algorithm (kmeans, hdbscan)"),
+    algorithm: str | None = Query(None, description="Filter by algorithm (kmeans, hdbscan)"),
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(50, ge=1, le=100, description="Items per page"),
     db: Database = Depends(get_db),
@@ -34,14 +33,11 @@ async def list_runs(
 
     Returns paginated list of clustering run summaries with basic metadata.
     """
-    # Get runs from service
     runs_list = run_service.list_runs(db)
 
-    # Filter by algorithm if provided
     if algorithm:
         runs_list = [r for r in runs_list if r.algorithm == algorithm]
 
-    # Calculate pagination
     total = len(runs_list)
     pages = (total + limit - 1) // limit
     start = (page - 1) * limit
@@ -86,8 +82,8 @@ async def get_run(
         description=run.description,
         parameters=run.parameters,
         created_at=run.created_at,
-        status="completed",  # Assuming completed for now
-        metrics=None,  # Could add metrics if available
+        status="completed",
+        metrics=None,
         latest_errors=None,
     )
 
@@ -112,16 +108,15 @@ async def get_run_status(
             detail={"error": {"type": "NotFound", "message": f"Run {run_id} not found"}},
         )
 
-    # Count processed queries
     with db.get_session() as session:
-        from sqlmodel import select, func
+        from sqlmodel import func, select
 
         count_stmt = select(func.count()).where(QueryCluster.run_id == run_id)
         processed = session.exec(count_stmt).one()
 
     return ClusteringRunStatusResponse(
         run_id=run.run_id,
-        status="completed",  # Assuming completed for existing runs
+        status="completed",
         processed=processed,
     )
 
@@ -135,9 +130,9 @@ async def list_clusters(
     run_id: str,
     include_counts: bool = Query(True, description="Include query counts per cluster"),
     include_percentages: bool = Query(True, description="Include percentages of total queries"),
-    summary_run_id: Optional[str] = Query(None, description="Filter by specific summary run ID"),
-    alias: Optional[str] = Query(None, description="Filter by summary alias"),
-    limit: Optional[int] = Query(None, ge=1, le=1000, description="Limit number of clusters"),
+    summary_run_id: str | None = Query(None, description="Filter by specific summary run ID"),
+    alias: str | None = Query(None, description="Filter by summary alias"),
+    limit: int | None = Query(None, ge=1, le=1000, description="Limit number of clusters"),
     page: int = Query(1, ge=1, description="Page number"),
     page_limit: int = Query(50, ge=1, le=100, description="Items per page"),
     db: Database = Depends(get_db),
@@ -150,28 +145,22 @@ async def list_clusters(
     - Filtering by summary_run_id or alias
     - Pagination
     """
-    # Get cluster summaries
-    summaries = cluster_service.list_cluster_summaries(
-        db, run_id, summary_run_id, alias, limit
-    )
+    summaries = cluster_service.list_cluster_summaries(db, run_id, summary_run_id, alias, limit)
 
-    # Get total query count for the run if we need percentages
     total_queries = None
     if include_counts or include_percentages:
         with db.get_session() as session:
-            from sqlmodel import select, func
+            from sqlmodel import func, select
 
             count_stmt = select(func.count()).where(QueryCluster.run_id == run_id)
             total_queries = session.exec(count_stmt).one()
 
-    # Enhance summaries with counts and percentages
     enriched_summaries = []
     for summary in summaries:
-        # Get query count for this cluster if not already set
         query_count = summary.num_queries
         if query_count is None and include_counts:
             with db.get_session() as session:
-                from sqlmodel import select, func
+                from sqlmodel import func, select
 
                 count_stmt = (
                     select(func.count())
@@ -180,7 +169,6 @@ async def list_clusters(
                 )
                 query_count = session.exec(count_stmt).one()
 
-        # Calculate percentage
         percentage = None
         if include_percentages and query_count and total_queries and total_queries > 0:
             percentage = round((query_count / total_queries) * 100, 2)
@@ -201,7 +189,6 @@ async def list_clusters(
             )
         )
 
-    # Paginate
     total = len(enriched_summaries)
     pages = (total + page_limit - 1) // page_limit
     start = (page - 1) * page_limit
@@ -218,7 +205,6 @@ async def list_clusters(
     )
 
 
-# ===== POST Endpoint Stubs (501 Not Implemented) =====
 
 
 @router.post(

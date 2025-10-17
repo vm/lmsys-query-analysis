@@ -1,24 +1,24 @@
 """Search endpoints for queries and clusters (semantic and full-text)."""
 
-from typing import Optional, Literal
-from fastapi import APIRouter, Depends, Query, HTTPException, status
+from typing import Literal
 
-from ..dependencies import get_db, get_chroma_path, create_chroma_manager
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+
+from ...clustering.embeddings import EmbeddingGenerator
+from ...db.connection import Database
+from ...db.models import ClusterSummary, QueryCluster
+from ...db.models import Query as QueryModel
+from ...semantic.clusters import ClustersClient
+from ...semantic.queries import QueriesClient
+from ..dependencies import create_chroma_manager, get_chroma_path, get_db
 from ..schemas import (
-    SearchQueriesResponse,
-    SearchClustersResponse,
-    QuerySearchResult,
+    ClusterInfo,
     ClusterSearchResult,
     QueryResponse,
-    ClusterInfo,
-    FacetBucket,
-    SearchFacets,
+    QuerySearchResult,
+    SearchClustersResponse,
+    SearchQueriesResponse,
 )
-from ...db.connection import Database
-from ...db.models import Query as QueryModel, ClusterSummary, QueryCluster
-from ...clustering.embeddings import EmbeddingGenerator
-from ...semantic.queries import QueriesClient
-from ...semantic.clusters import ClustersClient
 
 router = APIRouter()
 
@@ -31,9 +31,11 @@ router = APIRouter()
 async def search_queries(
     text: str = Query(..., description="Search text"),
     mode: Literal["semantic", "fulltext"] = Query("fulltext", description="Search mode"),
-    run_id: Optional[str] = Query(None, description="Filter by run ID"),
-    cluster_ids: Optional[str] = Query(None, description="Comma-separated cluster IDs"),
-    within_clusters: Optional[str] = Query(None, description="Semantic filter: find top clusters first"),
+    run_id: str | None = Query(None, description="Filter by run ID"),
+    cluster_ids: str | None = Query(None, description="Comma-separated cluster IDs"),
+    within_clusters: str | None = Query(
+        None, description="Semantic filter: find top clusters first"
+    ),
     top_clusters: int = Query(10, ge=1, le=50, description="How many clusters for within_clusters"),
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(50, ge=1, le=100, description="Results per page"),
@@ -51,32 +53,37 @@ async def search_queries(
     - `cluster_ids`: Hard filter by specific cluster IDs
     """
     if mode == "semantic":
-        # Semantic search via ChromaDB
         if not run_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail={"error": {"type": "ValueError", "message": "run_id required for semantic search"}},
+                detail={
+                    "error": {
+                        "type": "ValueError",
+                        "message": "run_id required for semantic search",
+                    }
+                },
             )
 
-        # Parse cluster_ids
         cluster_ids_list = None
         if cluster_ids:
             try:
                 cluster_ids_list = [int(x.strip()) for x in cluster_ids.split(",") if x.strip()]
-            except Exception:
+            except Exception as e:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail={"error": {"type": "ValueError", "message": "Invalid cluster_ids format"}},
-                )
+                    detail={
+                        "error": {"type": "ValueError", "message": "Invalid cluster_ids format"}
+                    },
+                ) from e
 
-        # Create ChromaManager and semantic clients
         chroma_manager = create_chroma_manager(run_id, db, chroma_path)
 
-        # Create embedding generator
         params = {}
         with db.get_session() as session:
             from sqlmodel import select
+
             from ...db.models import ClusteringRun
+
             run = session.exec(select(ClusteringRun).where(ClusteringRun.run_id == run_id)).first()
             if run:
                 params = run.parameters or {}
@@ -93,30 +100,29 @@ async def search_queries(
             output_dimension=embedding_dimension if embedding_provider == "cohere" else None,
         )
 
-        # Create queries client
         queries_client = QueriesClient(db, chroma_manager, embedder, run_id=run_id)
 
-        # Search
         hits = queries_client.find(
             text=text,
             run_id=run_id,
             cluster_ids=cluster_ids_list,
             within_clusters=within_clusters,
             top_clusters=top_clusters,
-            n_results=limit * 2,  # Fetch more for filtering
+            n_results=limit * 2,
             n_candidates=500,
         )
 
-        # Convert to response format
         items = []
         for hit in hits[:limit]:
             with db.get_session() as session:
                 from sqlmodel import select
-                query = session.exec(select(QueryModel).where(QueryModel.id == hit.query_id)).first()
+
+                query = session.exec(
+                    select(QueryModel).where(QueryModel.id == hit.query_id)
+                ).first()
                 if not query:
                     continue
 
-                # Get cluster info
                 clusters = []
                 if hit.cluster_id:
                     cluster_stmt = (
@@ -151,27 +157,29 @@ async def search_queries(
             page=page,
             pages=pages,
             limit=limit,
-            facets=None,  # Can add facet support later
+            facets=None,
             applied_clusters=None,
         )
 
     else:
-        # Full-text search via SQL LIKE
-        from sqlmodel import select, or_, and_
+        from sqlmodel import and_, select
 
         with db.get_session() as session:
             search_pattern = f"%{text}%"
             stmt = select(QueryModel).where(QueryModel.query_text.like(search_pattern))
 
-            # Filter by run_id if provided
             if run_id:
                 stmt = (
                     select(QueryModel)
                     .join(QueryCluster, QueryModel.id == QueryCluster.query_id)
-                    .where(and_(QueryModel.query_text.like(search_pattern), QueryCluster.run_id == run_id))
+                    .where(
+                        and_(
+                            QueryModel.query_text.like(search_pattern),
+                            QueryCluster.run_id == run_id,
+                        )
+                    )
                 )
 
-            # Execute and paginate
             all_queries = session.exec(stmt).all()
             total = len(all_queries)
             pages = (total + limit - 1) // limit
@@ -180,18 +188,21 @@ async def search_queries(
 
             items = []
             for query in all_queries[start:end]:
-                # Get cluster assignments
                 clusters = []
                 if run_id:
-                    cluster_stmt = select(QueryCluster, ClusterSummary).where(
-                        QueryCluster.query_id == query.id,
-                        QueryCluster.run_id == run_id,
-                    ).outerjoin(
-                        ClusterSummary,
-                        and_(
-                            QueryCluster.run_id == ClusterSummary.run_id,
-                            QueryCluster.cluster_id == ClusterSummary.cluster_id,
-                        ),
+                    cluster_stmt = (
+                        select(QueryCluster, ClusterSummary)
+                        .where(
+                            QueryCluster.query_id == query.id,
+                            QueryCluster.run_id == run_id,
+                        )
+                        .outerjoin(
+                            ClusterSummary,
+                            and_(
+                                QueryCluster.run_id == ClusterSummary.run_id,
+                                QueryCluster.cluster_id == ClusterSummary.cluster_id,
+                            ),
+                        )
                     )
                     assignments = session.exec(cluster_stmt).all()
                     for qc, summary in assignments:
@@ -231,7 +242,7 @@ async def search_queries(
 async def search_clusters(
     text: str = Query(..., description="Search text"),
     mode: Literal["semantic", "fulltext"] = Query("fulltext", description="Search mode"),
-    run_id: Optional[str] = Query(None, description="Filter by run ID"),
+    run_id: str | None = Query(None, description="Filter by run ID"),
     n_results: int = Query(20, ge=1, le=100, description="Number of results"),
     page: int = Query(1, ge=1, description="Page number"),
     db: Database = Depends(get_db),
@@ -247,16 +258,22 @@ async def search_clusters(
         if not run_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail={"error": {"type": "ValueError", "message": "run_id required for semantic search"}},
+                detail={
+                    "error": {
+                        "type": "ValueError",
+                        "message": "run_id required for semantic search",
+                    }
+                },
             )
 
-        # Create ChromaManager and semantic client
         chroma_manager = create_chroma_manager(run_id, db, chroma_path)
 
         params = {}
         with db.get_session() as session:
             from sqlmodel import select
+
             from ...db.models import ClusteringRun
+
             run = session.exec(select(ClusteringRun).where(ClusteringRun.run_id == run_id)).first()
             if run:
                 params = run.parameters or {}
@@ -275,7 +292,6 @@ async def search_clusters(
 
         clusters_client = ClustersClient(db, chroma_manager, embedder, run_id=run_id)
 
-        # Search
         hits = clusters_client.find(text=text, run_id=run_id, top_k=n_results)
 
         items = [
@@ -300,8 +316,7 @@ async def search_clusters(
         )
 
     else:
-        # Full-text search via SQL LIKE
-        from sqlmodel import select, or_, and_
+        from sqlmodel import or_, select
 
         with db.get_session() as session:
             search_pattern = f"%{text}%"

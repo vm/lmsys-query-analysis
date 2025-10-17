@@ -1,20 +1,21 @@
 """Curation endpoints for metadata, edit history, and orphaned queries."""
 
-from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlmodel import select
 
+from ...db.connection import Database
+from ...db.models import ClusterEdit, OrphanedQuery
+from ...db.models import ClusterMetadata as ClusterMetadataModel
+from ...db.models import Query as QueryModel
 from ..dependencies import get_db
 from ..schemas import (
     ClusterMetadata,
-    EditHistoryResponse,
     EditHistoryRecord,
+    EditHistoryResponse,
     OrphanedQueriesResponse,
     OrphanInfo,
     QueryResponse,
 )
-from ...db.connection import Database
-from ...db.models import ClusterMetadata as ClusterMetadataModel, ClusterEdit, OrphanedQuery, Query as QueryModel
-from sqlmodel import select
 
 router = APIRouter()
 
@@ -39,7 +40,6 @@ async def get_cluster_metadata(
         metadata = session.exec(stmt).first()
 
         if not metadata:
-            # Return empty metadata if not found
             return ClusterMetadata(
                 coherence_score=None,
                 quality=None,
@@ -79,7 +79,6 @@ async def get_cluster_history(
 
         all_edits = session.exec(stmt).all()
 
-        # Paginate
         total = len(all_edits)
         pages = (total + limit - 1) // limit
         start = (page - 1) * limit
@@ -120,11 +119,14 @@ async def get_run_audit(
 ):
     """Get the full edit history (audit log) for a clustering run."""
     with db.get_session() as session:
-        stmt = select(ClusterEdit).where(ClusterEdit.run_id == run_id).order_by(ClusterEdit.timestamp.desc())
+        stmt = (
+            select(ClusterEdit)
+            .where(ClusterEdit.run_id == run_id)
+            .order_by(ClusterEdit.timestamp.desc())
+        )
 
         all_edits = session.exec(stmt).all()
 
-        # Paginate
         total = len(all_edits)
         pages = (total + limit - 1) // limit
         start = (page - 1) * limit
@@ -174,7 +176,6 @@ async def get_orphaned_queries(
 
         all_orphans = session.exec(stmt).all()
 
-        # Paginate
         total = len(all_orphans)
         pages = (total + limit - 1) // limit
         start = (page - 1) * limit
@@ -202,7 +203,6 @@ async def get_orphaned_queries(
     )
 
 
-# ===== POST Endpoint Stubs (501 Not Implemented) =====
 
 
 @router.post(
